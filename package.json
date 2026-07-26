@@ -1,0 +1,26 @@
+{
+  "name": "shizuka",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "静か — オフラインで動く瞑想 PWA（呼吸ガイド / タイマー / 環境音 / 継続記録）",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "icons": "node scripts/generate-icons.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "vite-plugin-pwa": "^1.3.0"
+  }
+}
