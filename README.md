@@ -5,9 +5,11 @@
 
 ```
 npm install
-npm run dev      # http://localhost:5173
-npm run build    # 型チェック + dist/ を生成
-npm run preview  # ビルド結果を確認
+npm run dev           # http://localhost:5173
+npm run dev -- --host # 同じ Wi-Fi のスマホから開く
+npm run build         # 型チェック + dist/ を生成
+npm run preview       # ビルド結果を確認
+npm run build:single  # dist/shizuka-single.html（1ファイルで完結する版）
 ```
 
 ## 何ができるか
