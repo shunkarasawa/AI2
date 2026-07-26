@@ -18,7 +18,9 @@ export default defineConfig({
         start_url: './',
         scope: './',
         display: 'standalone',
-        orientation: 'portrait',
+        // 表示方向は固定しない（WCAG 1.3.4）。横向きでも成立するよう
+        // .orb-stage の大きさに vh の上限を入れてある
+
         background_color: '#0b0e13',
         theme_color: '#0b0e13',
         categories: ['health', 'lifestyle'],

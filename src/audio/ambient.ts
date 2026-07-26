@@ -11,7 +11,7 @@
  */
 
 import { getAudio } from './context';
-import { noiseSource } from './noise';
+import { noiseSource, SEAM_SECONDS } from './noise';
 
 export type AmbientId = 'rain' | 'ocean' | 'stream' | 'forestNight' | 'white' | 'brown' | 'drone';
 
@@ -64,7 +64,17 @@ export function startAmbient(id: AmbientId, volume: number): AmbientHandle {
   bus.connect(master);
 
   const build = BUILDERS[id](ctx, bus);
-  for (const src of build.sources) src.start();
+  // 同じノイズバッファを共有しているので、開始位置をずらさないと
+  // レイヤーどうしが完全に相関する（小川の2層が同じ音、虫が3匹とも同期する）。
+  // 位置をずらせば毎回わずかに違う音になり、ループの周期も揃わなくなる
+  for (const src of build.sources) {
+    if (src instanceof AudioBufferSourceNode && src.buffer) {
+      const span = src.buffer.duration - SEAM_SECONDS;
+      src.start(0, SEAM_SECONDS + Math.random() * Math.max(0, span));
+    } else {
+      src.start();
+    }
+  }
 
   let stopped = false;
 
@@ -129,6 +139,19 @@ function gain(ctx: AudioContext, value: number): GainNode {
   return node;
 }
 
+/**
+ * 位相をずらした正弦波。
+ * sin(2πt + φ) = cos(φ)·sin(2πt) + sin(φ)·cos(2πt) を
+ * PeriodicWave の imag/real 係数に割り当てる。
+ * OscillatorNode は位相を指定できないので、こうしないと
+ * すべての LFO が毎回まったく同じところから始まってしまう。
+ */
+function phasedSine(ctx: AudioContext, phase: number): PeriodicWave {
+  const real = new Float32Array([0, Math.sin(phase)]);
+  const imag = new Float32Array([0, Math.cos(phase)]);
+  return ctx.createPeriodicWave(real, imag, { disableNormalization: true });
+}
+
 /** AudioParam をゆっくり揺らす。base を中心に ±depth */
 function modulate(
   ctx: AudioContext,
@@ -140,7 +163,7 @@ function modulate(
 ): void {
   param.value = base;
   const osc = ctx.createOscillator();
-  osc.type = 'sine';
+  osc.setPeriodicWave(phasedSine(ctx, Math.random() * Math.PI * 2));
   osc.frequency.value = rate;
   const amount = gain(ctx, depth);
   osc.connect(amount);

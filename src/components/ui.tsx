@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 
 export function Row({
   title,
@@ -33,21 +33,31 @@ export function SwitchRow({
   onChange: (next: boolean) => void;
   disabled?: boolean;
 }) {
+  const descId = useId();
   return (
     <div className="row">
       <div className="row-body">
         <div className="row-title">{title}</div>
-        {desc ? <div className="row-desc">{desc}</div> : null}
+        {desc ? (
+          <div className="row-desc" id={descId}>
+            {desc}
+          </div>
+        ) : null}
       </div>
+      {/* disabled にするとタブ順から外れ、「なぜ切り替えられないのか」を
+          読み上げで確認できなくなる（iOS では振動の行が常にこの状態になる） */}
       <button
         type="button"
         role="switch"
         aria-checked={checked}
         aria-label={title}
+        aria-disabled={disabled}
+        aria-describedby={desc ? descId : undefined}
         className="switch"
-        disabled={disabled}
-        style={disabled ? { opacity: 0.4 } : undefined}
-        onClick={() => onChange(!checked)}
+        onClick={() => {
+          if (disabled) return;
+          onChange(!checked);
+        }}
       />
     </div>
   );
@@ -86,6 +96,8 @@ export function SliderRow({
         step={5}
         value={percent}
         aria-label={title}
+        // これがないと「70」とだけ読まれる
+        aria-valuetext={format ? format(value) : `${percent}%`}
         onChange={(e) => onChange(Number(e.currentTarget.value) / 100)}
       />
     </div>

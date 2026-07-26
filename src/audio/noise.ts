@@ -6,8 +6,13 @@
 export type NoiseColor = 'white' | 'pink' | 'brown';
 
 const LOOP_SECONDS = 8;
-/** ループの継ぎ目でプツッと鳴らないためのクロスフェード長 */
-export const SEAM_SECONDS = 0.05;
+/**
+ * ループの継ぎ目をつなぐクロスフェード長。
+ * 短いと、無相関な2信号を混ぜたときのパワー低下（等パワー曲線でも -3dB）が
+ * 短時間に集中して低周波の過渡になる。ブラウンノイズでは 50ms のとき
+ * 最大 -9dB の落ち込みが 8秒ごとに繰り返して聞き取れたため、0.5 秒に伸ばしている。
+ */
+export const SEAM_SECONDS = 0.5;
 
 const cache = new WeakMap<BaseAudioContext, Map<NoiseColor, AudioBuffer>>();
 
@@ -81,10 +86,12 @@ function crossfadeSeam(data: Float32Array, seam: number): void {
   if (seam <= 0 || seam * 2 >= data.length) return;
   const tailStart = data.length - seam;
   for (let i = 0; i < seam; i++) {
-    const t = i / seam;
+    // 無相関な信号どうしなので、線形ではなく等パワー（cos/sin）で混ぜる。
+    // 線形だと中間で -3dB より深く沈む
+    const t = (i / seam) * (Math.PI / 2);
     const tail = data[tailStart + i] ?? 0;
     const head = data[i] ?? 0;
-    data[tailStart + i] = tail * (1 - t) + head * t;
+    data[tailStart + i] = tail * Math.cos(t) + head * Math.sin(t);
   }
 }
 

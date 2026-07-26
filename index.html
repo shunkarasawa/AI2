@@ -2,22 +2,42 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
-    />
+    <!-- 拡大を禁止しない（WCAG 1.4.4）。最小 0.5625rem のラベルがあるため
+         ピンチズームは実際に必要になる。viewport-fit はセーフエリアのために残す -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>静か — 瞑想と呼吸</title>
     <meta name="description" content="呼吸ガイド、瞑想タイマー、環境音、継続記録。すべてオフラインで動きます。" />
     <!-- テーマ切り替えに合わせて App.tsx から content を書き換える -->
     <meta name="theme-color" content="#0b0e13" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- black-translucent はステータスバーの文字を常に白にするため、
+         明るいテーマだと時刻や電池が読めなくなる。theme-color に追従させる -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="静か" />
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
   </head>
   <body>
     <div id="root"></div>
+    <!-- バンドルの実行前にテーマを当てる。useEffect ではペイント後になるため、
+         明るいテーマの利用者がコールドロードで暗い画面を数フレーム見てしまう -->
+    <script>
+      (function () {
+        try {
+          var saved = JSON.parse(localStorage.getItem('shizuka.settings.v1') || '{}');
+          var theme = saved && typeof saved.theme === 'string' ? saved.theme : 'system';
+          var light =
+            theme === 'light' ||
+            (theme === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
+          document.documentElement.dataset.theme = light ? 'light' : 'dark';
+          document
+            .querySelector('meta[name="theme-color"]')
+            .setAttribute('content', light ? '#f7f6f2' : '#0b0e13');
+        } catch (e) {
+          document.documentElement.dataset.theme = 'dark';
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

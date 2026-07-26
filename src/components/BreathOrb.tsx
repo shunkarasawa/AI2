@@ -86,9 +86,17 @@ export function BreathOrb({
         )}
       </div>
 
-      {/* 音を切っていても、読み上げでは区間の変化が伝わるように */}
+      {/* 音を切っていても、読み上げでは区間の変化が伝わるように。
+          静かに座るモードで残り時間をそのまま流すと毎秒割り込むことになり
+          （20分で1200回）、他の操作の読み上げができなくなるので分単位に間引く */}
       <span className="visually-hidden" aria-live="polite">
-        {silent ? `残り ${formatClock(remaining)}` : phase ? PHASE_LABEL[phase] : ''}
+        {silent
+          ? remaining > 1 && Math.ceil(remaining) % 60 === 0
+            ? `残り ${Math.round(remaining / 60)}分`
+            : ''
+          : phase
+            ? PHASE_LABEL[phase]
+            : ''}
       </span>
     </div>
   );

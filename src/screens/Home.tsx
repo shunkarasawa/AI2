@@ -25,6 +25,8 @@ interface Props {
 export function Home({ config, settings, summary, onConfig, onStart }: Props) {
   const preview = useRef<AmbientHandle | null>(null);
   const previewTimer = useRef<number | null>(null);
+  /** await をまたぐ間に別の音が選ばれたかを見るための世代番号 */
+  const previewGen = useRef(0);
   const [previewing, setPreviewing] = useState<AmbientId | null>(null);
 
   const stopPreview = () => {
@@ -38,12 +40,16 @@ export function Home({ config, settings, summary, onConfig, onStart }: Props) {
   useEffect(() => stopPreview, []);
 
   const togglePreview = async (id: AmbientId) => {
-    if (previewing === id) {
-      stopPreview();
-      return;
-    }
+    // unlockAudio を待つ間に別のボタンが押されると、
+    // 先に始まった方のハンドルが上書きされて誰も止められなくなる
+    const generation = ++previewGen.current;
+    const wasPlaying = previewing === id;
     stopPreview();
+    if (wasPlaying) return;
+
     await unlockAudio();
+    if (generation !== previewGen.current) return;
+
     preview.current = startAmbient(id, settings.ambientVolume);
     setPreviewing(id);
     previewTimer.current = window.setTimeout(stopPreview, PREVIEW_MS);
@@ -98,7 +104,7 @@ export function Home({ config, settings, summary, onConfig, onStart }: Props) {
 
       {config.mode === 'breath' ? (
         <Section title="呼吸のリズム" note={`1分に約${Math.round(breathsPerMinute(pattern))}回`}>
-          <div className="option-list">
+          <div className="option-list" role="group" aria-label="呼吸のリズム">
             {PATTERNS.map((item) => (
               <button
                 type="button"
@@ -124,14 +130,20 @@ export function Home({ config, settings, summary, onConfig, onStart }: Props) {
         title="長さ"
         note={config.mode === 'breath' ? `約${breaths}呼吸` : undefined}
       >
-        <div className="duration-grid">
+        <div className="duration-grid" role="group" aria-label="セッションの長さ">
           {DURATIONS.map((minutes) => (
             <button
               type="button"
               key={minutes}
               className="duration"
               aria-pressed={config.durationSec === minutes * 60}
-              onClick={() => onConfig({ durationSec: minutes * 60 })}
+              onClick={() =>
+                onConfig({
+                  durationSec: minutes * 60,
+                  // 長さより長い間隔は成立しないので、選択済みでも落とす
+                  ...(config.intervalBellMin * 60 >= minutes * 60 ? { intervalBellMin: 0 } : {}),
+                })
+              }
             >
               <span className="duration-num">{minutes}</span>
               <span className="duration-unit">分</span>
@@ -207,32 +219,37 @@ export function Home({ config, settings, summary, onConfig, onStart }: Props) {
           />
           <div className="row" style={{ display: 'block' }}>
             <div className="row-title" style={{ marginBottom: '0.5rem' }}>途中のベル</div>
-            <div className="chips">
-              {INTERVALS.map((minutes) => (
-                <button
-                  type="button"
-                  key={minutes}
-                  className="chip"
-                  aria-pressed={config.intervalBellMin === minutes}
-                  disabled={minutes * 60 >= config.durationSec && minutes !== 0}
-                  style={
-                    minutes * 60 >= config.durationSec && minutes !== 0
-                      ? { opacity: 0.35 }
-                      : undefined
-                  }
-                  onClick={() => {
-                    onConfig({ intervalBellMin: minutes });
-                    if (minutes > 0) {
-                      void unlockAudio().then(() =>
-                        playBell(BELL_TONES.interval, settings.bellVolume),
-                      );
-                    }
-                  }}
-                >
-                  {minutes === 0 ? 'なし' : `${minutes}分ごと`}
-                </button>
-              ))}
+            <div className="chips" role="group" aria-label="途中のベルの間隔">
+              {INTERVALS.map((minutes) => {
+                // disabled にするとタブ順から外れ、なぜ押せないのかを読めなくなる。
+                // aria-disabled ならフォーカスして理由を確認できる
+                const unavailable = minutes !== 0 && minutes * 60 >= config.durationSec;
+                return (
+                  <button
+                    type="button"
+                    key={minutes}
+                    className="chip"
+                    aria-pressed={config.intervalBellMin === minutes}
+                    aria-disabled={unavailable}
+                    aria-describedby={unavailable ? 'interval-note' : undefined}
+                    onClick={() => {
+                      if (unavailable) return;
+                      onConfig({ intervalBellMin: minutes });
+                      if (minutes > 0) {
+                        void unlockAudio().then(() =>
+                          playBell(BELL_TONES.interval, settings.bellVolume),
+                        );
+                      }
+                    }}
+                  >
+                    {minutes === 0 ? 'なし' : `${minutes}分ごと`}
+                  </button>
+                );
+              })}
             </div>
+            <p id="interval-note" className="row-desc">
+              セッションの長さ以上の間隔は選べません
+            </p>
           </div>
         </div>
       </Section>

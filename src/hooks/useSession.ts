@@ -46,10 +46,15 @@ export interface Coarse {
 interface Options {
   config: SessionConfig;
   settings: Settings;
-  onFinish: (record: SessionRecord, completed: boolean) => void;
+  onFinish: (record: SessionRecord) => void;
 }
 
-/** 裏に回っている間に過ぎたベルは鳴らさない（戻った瞬間に連打されないように） */
+/**
+ * フレーム間隔がこれを超えたら「裏に回っていた」と見なし、その間のベルを鳴らさない。
+ * 判定に「予定からの遅れ」ではなくフレーム間隔を使うのが要点。
+ * 遅れで判定すると、画面を見ているのに GC などで一瞬詰まっただけで
+ * その回のベルが黙って消える（5分ごと設定では唯一のベルが消えることがある）。
+ */
 const BELL_TOLERANCE = 2;
 const ORB_MIN = 0.34;
 
@@ -125,7 +130,11 @@ export function useSession({ config, settings, onFinish }: Options) {
 
   const ambientRef = useRef<AmbientHandle | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  /** 飛行中の wakeLock.request() を無効化するための世代番号 */
+  const wakeGenRef = useRef(0);
+  const wakePendingRef = useRef(false);
   const nextBellRef = useRef(1);
+  const prevElapsedRef = useRef(0);
   const lastPhaseRef = useRef<PhaseKind | null>(null);
   const startedIsoRef = useRef('');
 
@@ -145,22 +154,41 @@ export function useSession({ config, settings, onFinish }: Options) {
   // ---------------------------------------------------------- 画面スリープ抑止
 
   const releaseWakeLock = useCallback(() => {
+    // 世代を進めることで、飛行中の request() が後から解決しても掴み直さない
+    wakeGenRef.current += 1;
     const sentinel = wakeLockRef.current;
     wakeLockRef.current = null;
     void sentinel?.release().catch(() => undefined);
   }, []);
 
+  /**
+   * 画面スリープを止める。await をまたぐので、
+   *   - 取得中フラグで二重取得を防ぐ（ref の null 判定だけでは await 前に2本通る）
+   *   - 世代が進んでいたら取得できた sentinel を即返す（終了後に掴んだままになるのを防ぐ）
+   *   - release リスナは同一性を見る（古い sentinel の release で新しい参照を消さない）
+   * これを守らないと、開始直後にやめたときページを閉じるまで画面が消えなくなる。
+   */
   const acquireWakeLock = useCallback(async () => {
     if (!settingsRef.current.keepAwake) return;
     if (!('wakeLock' in navigator)) return;
-    if (wakeLockRef.current) return;
+    if (wakeLockRef.current || wakePendingRef.current) return;
+
+    const generation = wakeGenRef.current;
+    wakePendingRef.current = true;
     try {
-      wakeLockRef.current = await navigator.wakeLock.request('screen');
-      wakeLockRef.current.addEventListener('release', () => {
-        wakeLockRef.current = null;
+      const sentinel = await navigator.wakeLock.request('screen');
+      if (generation !== wakeGenRef.current) {
+        void sentinel.release().catch(() => undefined);
+        return;
+      }
+      wakeLockRef.current = sentinel;
+      sentinel.addEventListener('release', () => {
+        if (wakeLockRef.current === sentinel) wakeLockRef.current = null;
       });
     } catch {
       /* 非対応・電源状態などで拒否された場合は諦める */
+    } finally {
+      wakePendingRef.current = false;
     }
   }, []);
 
@@ -215,7 +243,7 @@ export function useSession({ config, settings, onFinish }: Options) {
         phaseCountdown: 0,
       }));
       frameCb.current?.({ openness: 0, progress: completed ? 1 : elapsed / cfg.durationSec });
-      onFinishRef.current(record, completed);
+      onFinishRef.current(record);
     },
     [elapsedNow, releaseWakeLock, stopAmbient],
   );
@@ -234,11 +262,13 @@ export function useSession({ config, settings, onFinish }: Options) {
 
     const phase = cfg.mode === 'breath' ? phaseAt(elapsed, cfg.patternId) : null;
 
-    // 途中のベル
+    // 途中のベル。フレーム間隔で「裏に回っていたか」を判定する
+    const frameGap = elapsed - prevElapsedRef.current;
+    prevElapsedRef.current = elapsed;
     if (cfg.intervalBellMin > 0) {
       const target = nextBellRef.current * cfg.intervalBellMin * 60;
       if (elapsed >= target) {
-        if (target < cfg.durationSec && elapsed - target < BELL_TOLERANCE) {
+        if (target < cfg.durationSec && frameGap < BELL_TOLERANCE) {
           playBell(BELL_TONES.interval, set.bellVolume);
         }
         nextBellRef.current += 1;
@@ -289,6 +319,7 @@ export function useSession({ config, settings, onFinish }: Options) {
     pausedTotal.current = 0;
     pausedAt.current = null;
     nextBellRef.current = 1;
+    prevElapsedRef.current = 0;
     lastPhaseRef.current = null;
     startedIsoRef.current = new Date().toISOString();
 
@@ -329,6 +360,8 @@ export function useSession({ config, settings, onFinish }: Options) {
     ambientRef.current?.setVolume(settingsRef.current.ambientVolume, 1.2);
     void acquireWakeLock();
     setState('running');
+    // ループが2本走ると setCoarse と finish が二重に走る
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(loop);
   }, [acquireWakeLock, loop, state]);
 
@@ -358,10 +391,15 @@ export function useSession({ config, settings, onFinish }: Options) {
     frameCb.current = cb;
   }, []);
 
-  // 設定画面で音量を変えたら、鳴っている環境音にも即反映する
+  // 設定画面で音量を変えたら、鳴っている環境音にも即反映する。
+  // state を依存に入れると開始・再開のたびに発火し、
+  // setVolume の cancelScheduledValues が 2秒のフェードインを 0.25秒に潰してしまう
+  const lastAmbientVolume = useRef(settings.ambientVolume);
   useEffect(() => {
-    if (state === 'running') ambientRef.current?.setVolume(settings.ambientVolume);
-  }, [settings.ambientVolume, state]);
+    if (lastAmbientVolume.current === settings.ambientVolume) return;
+    lastAmbientVolume.current = settings.ambientVolume;
+    ambientRef.current?.setVolume(settings.ambientVolume);
+  }, [settings.ambientVolume]);
 
   // 画面を消して戻ってきたら wake lock を取り直す（解放されているため）
   useEffect(() => {

@@ -76,7 +76,9 @@ const SPECS: Record<BellTone, BellSpec> = {
 
 /** ベルを鳴らす。戻り値は響きが終わる時刻（AudioContext 時間） */
 export function playBell(tone: BellTone, volume: number, at?: number): number {
-  if (volume <= 0) return 0;
+  // 壊れた設定が入っていても例外で呼び出し元を止めない
+  // （AudioParam に NaN を渡すと TypeError になる）
+  if (!Number.isFinite(volume) || volume <= 0) return 0;
   const { ctx, master } = getAudio();
   const spec = SPECS[tone];
   const t0 = at ?? ctx.currentTime + 0.02;

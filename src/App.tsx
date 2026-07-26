@@ -3,6 +3,7 @@ import { TabBar, type Tab } from './components/TabBar';
 import { useSession } from './hooks/useSession';
 import { summarize } from './lib/stats';
 import {
+  isWorthRecording,
   loadConfig,
   loadSessions,
   loadSettings,
@@ -19,9 +20,9 @@ import { Session } from './screens/Session';
 import { Settings } from './screens/Settings';
 import { Stats } from './screens/Stats';
 
-/** これより短いものは記録しない（誤タップ・確認のための開始を残さないため） */
-const MIN_RECORD_SEC = 30;
 const TOAST_MS = 2200;
+
+const TAB_TITLE: Record<Tab, string> = { home: '瞑想', stats: '記録', settings: '設定' };
 
 export function App() {
   const [sessions, setSessions] = useState<SessionRecord[]>(loadSessions);
@@ -30,12 +31,14 @@ export function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
+  const mainRef = useRef<HTMLElement>(null);
 
   useEffect(() => saveSessions(sessions), [sessions]);
   useEffect(() => saveSettings(settings), [settings]);
   useEffect(() => saveConfig(config), [config]);
 
   // テーマの適用。system のときは OS の設定に追従する
+  // （初回ペイント前の適用は index.html のインラインスクリプトが担当）
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: light)');
     const apply = () => {
@@ -55,8 +58,9 @@ export function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), TOAST_MS);
   }, []);
 
-  const onFinish = useCallback((record: SessionRecord, completed: boolean) => {
-    if (!completed && record.durationSec < MIN_RECORD_SEC) return;
+  const onFinish = useCallback((record: SessionRecord) => {
+    // 完走したかどうかに関わらず、短すぎるものは残さない
+    if (!isWorthRecording(record.durationSec)) return;
     setSessions((prev) => [...prev, record]);
   }, []);
 
@@ -81,40 +85,57 @@ export function App() {
 
   const resetAll = useCallback(() => setSessions([]), []);
 
+  // タブを変えたら見出しの器にフォーカスを移す。
+  // ルーティングを持たないので、これがないと読み上げ環境で画面が変わったことに気づけない
+  const changeTab = useCallback((next: Tab) => {
+    setTab(next);
+    requestAnimationFrame(() => mainRef.current?.focus());
+  }, []);
+
   const inSession = engine.state !== 'idle';
 
   return (
     <div className="app">
-      {tab === 'home' ? (
-        <Home
-          config={config}
-          settings={settings}
-          summary={summary}
-          onConfig={patchConfig}
-          onStart={() => void engine.start()}
-        />
-      ) : null}
-      {tab === 'stats' ? <Stats sessions={sessions} /> : null}
-      {tab === 'settings' ? (
-        <Settings
-          settings={settings}
-          config={config}
-          sessions={sessions}
-          onSettings={patchSettings}
-          onImport={importBackup}
-          onReset={resetAll}
-          notify={notify}
-        />
-      ) : null}
+      {/* セッション中は背後を inert にする。これがないと Tab の1回目で
+          見えないタブボタンに乗り、Enter で裏の画面が切り替わってしまう */}
+      <div className="app-body" inert={inSession}>
+        <main ref={mainRef} tabIndex={-1} aria-label={TAB_TITLE[tab]} className="app-main">
+          {tab === 'home' ? (
+            <Home
+              config={config}
+              settings={settings}
+              summary={summary}
+              onConfig={patchConfig}
+              onStart={() => void engine.start()}
+            />
+          ) : null}
+          {tab === 'stats' ? <Stats sessions={sessions} /> : null}
+          {tab === 'settings' ? (
+            <Settings
+              settings={settings}
+              config={config}
+              sessions={sessions}
+              onSettings={patchSettings}
+              onImport={importBackup}
+              onReset={resetAll}
+              notify={notify}
+            />
+          ) : null}
+        </main>
 
-      <TabBar tab={tab} onChange={setTab} />
+        <TabBar tab={tab} onChange={changeTab} />
+      </div>
 
       {inSession ? (
         <Session config={config} settings={settings} engine={engine} onClose={engine.reset} />
       ) : null}
 
+      {/* リージョンは常設し中身だけ差し替える。挿入と同時だと初回が読まれないことがある */}
+      <div className="visually-hidden" role="status">
+        {toast ?? ''}
+      </div>
       {toast ? (
-        <div className="toast" role="status">
+        <div className="toast" aria-hidden="true">
           {toast}
         </div>
       ) : null}
